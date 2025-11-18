@@ -6,10 +6,9 @@ import {
   Info,
 } from 'lucide-react';
 
-// --- CONFIG & TYPES ---
 
-const AUTH_API_URL = 'http://localhost:8000'; // Pastikan port sesuai backend (misal 3005 atau 8000)
-const DATA_API_URL = 'http://localhost:8000';
+const AUTH_API_URL = 'https://api-bbm-subsidi.sta.my.id'; 
+const DATA_API_URL = 'https://api-bbm-subsidi.sta.my.id';
 
 interface Vehicle {
   id?: number;
