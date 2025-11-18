@@ -1,0 +1,17 @@
+/* src/index.css */
+@import "tailwindcss";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* @import 'leaflet/dist/leaflet.css'; */
+
+/* @import 'leaflet/dist/leaflet.css';
+@import 'react-leaflet-cluster/dist/assets/MarkerCluster.css';
+@import 'react-leaflet-cluster/dist/assets/MarkerCluster.Default.css'; */
+
+/* Pastikan peta memiliki tinggi */
+/* .leaflet-container {
+  height: 100%;
+  width: 100%;
+} */
