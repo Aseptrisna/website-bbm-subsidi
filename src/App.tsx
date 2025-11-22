@@ -3,13 +3,21 @@ import {
   LayoutDashboard, Car, Fuel, AlertTriangle,
   TrendingUp, LogOut, Plus, Edit, Trash2,
   ChevronLeft, ChevronRight, Menu, X, User,
-  Info,
+  Info, Calendar, Zap, BarChart3, Activity, 
+  FileText, ChevronDown
 } from 'lucide-react';
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+  Legend, ResponsiveContainer, AreaChart, Area
+} from 'recharts';
 
 
+// --- CONSTANTS & CONFIG ---
 const AUTH_API_URL = 'https://api-bbm-subsidi.sta.my.id'; 
 const DATA_API_URL = 'https://api-bbm-subsidi.sta.my.id';
+const PREDICTION_API_URL = 'http://localhost:8000/recommendations/visualize';
 
+// --- INTERFACES ---
 interface Vehicle {
   id?: number;
   vehicle_id?: number;
@@ -21,7 +29,7 @@ interface Vehicle {
 
 interface SPBU {
   id?: number;
-  station_id?: number; // Adjust based on backend response
+  station_id?: number;
   kode_spbu: string;
   nama_spbu: string;
   kota: string;
@@ -47,11 +55,14 @@ interface AlertData {
   over_quota: boolean;
 }
 
-interface RecommendationData {
+interface PredictionData {
+  id: number;
   vehicle_id: number;
   plat_nomor: string;
-  recommended_total_liter: number;
-  method: string;
+  metode: string;
+  type: string;
+  waktu: string;
+  kuota_liter: number;
 }
 
 // --- COMPONENT: UI UTILS ---
@@ -137,7 +148,6 @@ const LoginPage = ({ onLogin }: { onLogin: (token: string) => void }) => {
     setError('');
 
     try {
-      // Try Auth Port usually 3005 or fallback to provided 8000
       const res = await fetch(`${AUTH_API_URL}/users/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -152,7 +162,7 @@ const LoginPage = ({ onLogin }: { onLogin: (token: string) => void }) => {
       }
     } catch (err) {
       console.error(err);
-      // Fallback for demo
+      // Fallback for demo if API fails
       if (username === 'admin' && password === 'admin') {
         onLogin('mock-token-123');
         alert("Mode Demo: Login Berhasil (API tidak terdeteksi)");
@@ -441,7 +451,6 @@ const SPBUPage = ({ token }: { token: string }) => {
             )))}
           </tbody>
         </table>
-        {/* Pagination Controls for SPBU */}
         <div className="p-4 border-t border-slate-100 flex justify-end gap-2">
           <Button variant="outline" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1 || loading}><ChevronLeft size={16} /></Button>
           <span className="flex items-center px-2 text-slate-600 font-medium">Hal {page}</span>
@@ -479,7 +488,6 @@ const TransactionsPage = ({ token }: { token: string }) => {
     plat_nomor: '', kode_spbu: '', jenis_bbm: 'Pertalite', volume_liter: 0
   });
 
-  // Fetch Dropdowns (Once)
   useEffect(() => {
     const fetchDropdowns = async () => {
       try {
@@ -500,7 +508,6 @@ const TransactionsPage = ({ token }: { token: string }) => {
     fetchDropdowns();
   }, [token]);
 
-  // Fetch Transactions (On Page Change)
   const fetchTransactions = async () => {
     setLoading(true);
     try {
@@ -533,7 +540,7 @@ const TransactionsPage = ({ token }: { token: string }) => {
       });
       if (res.ok) {
         setModalOpen(false);
-        fetchTransactions(); // Refresh list
+        fetchTransactions();
         setFormData({ plat_nomor: '', kode_spbu: '', jenis_bbm: 'Pertalite', volume_liter: 0 });
       } else {
         alert("Gagal menyimpan transaksi");
@@ -584,7 +591,6 @@ const TransactionsPage = ({ token }: { token: string }) => {
             )}
           </tbody>
         </table>
-        {/* Pagination Controls for Transactions */}
         <div className="p-4 border-t border-slate-100 flex justify-end gap-2">
           <Button variant="outline" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1 || loading}><ChevronLeft size={16} /></Button>
           <span className="flex items-center px-2 text-slate-600 font-medium">Hal {page}</span>
@@ -722,130 +728,290 @@ const AlertsPage = ({ token }: { token: string }) => {
 };
 
 const RecommendationsPage = ({ token }: { token: string }) => {
-  const [data, setData] = useState<RecommendationData[]>([]);
-  const [year, setYear] = useState(2026);
-  const [method, setMethod] = useState('simple_average');
+  // --- State Management ---
+  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
+  const [selectedVehicleId, setSelectedVehicleId] = useState<number | null>(null);
+  
+  const [method, setMethod] = useState<'ARIMA' | 'LSTM' | 'Prophet'>('ARIMA');
+  const [timeType, setTimeType] = useState<'Harian' | 'Bulanan' | 'Tahunan'>('Harian');
+  
+  const [data, setData] = useState<PredictionData[]>([]);
   const [loading, setLoading] = useState(false);
+  const [totalData, setTotalData] = useState(0);
 
-  const fetchRecs = async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(`${DATA_API_URL}/recommendations/predict?year=${year}&method=${method}`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      const json = await res.json();
-      setData(json.data || []);
-    } catch (e) { console.error(e); }
-    finally { setLoading(false); }
+  // --- 1. Fetch Data Kendaraan (Untuk Dropdown) ---
+  useEffect(() => {
+    const fetchVehicles = async () => {
+      try {
+        const res = await fetch(`${DATA_API_URL}/vehicles?size=100`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        const json = await res.json();
+        const vehicleList = Array.isArray(json) ? json : (json.data || json.items || []);
+        
+        setVehicles(vehicleList);
+
+        // Default Index 0: Pilih kendaraan pertama jika ada
+        if (vehicleList.length > 0) {
+          setSelectedVehicleId(vehicleList[0].id || vehicleList[0].vehicle_id || null);
+        }
+      } catch (error) {
+        console.error("Gagal mengambil data kendaraan", error);
+      }
+    };
+    fetchVehicles();
+  }, [token]);
+
+  // --- 2. Fetch Data Prediksi (Setiap kali filter berubah) ---
+  useEffect(() => {
+    if (!selectedVehicleId) return;
+
+    const fetchData = async () => {
+      setLoading(true);
+      try {
+        const url = `${PREDICTION_API_URL}?vehicle_id=${selectedVehicleId}&method=${method}&type=${timeType}`;
+        const res = await fetch(url);
+        
+        if (res.ok) {
+          const json = await res.json();
+          // Sesuai struktur response: { status, total_data, data: [] }
+          setData(json.data || []);
+          setTotalData(json.total_data || 0);
+        } else {
+          console.error("API Error:", res.statusText);
+          setData([]);
+        }
+      } catch (error) {
+        console.error("Fetch prediction error:", error);
+        setData([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, [selectedVehicleId, method, timeType]);
+
+  // --- Helper Formatter ---
+  const formatXAxis = (tickItem: string) => {
+    const date = new Date(tickItem);
+    if (timeType === 'Tahunan') return date.getFullYear().toString();
+    if (timeType === 'Bulanan') return date.toLocaleDateString('id-ID', { month: 'short', year: '2-digit' });
+    return date.toLocaleDateString('id-ID', { day: '2-digit', month: 'short' }); // Harian
   };
 
-  useEffect(() => { fetchRecs(); }, [year, method]);
+  const totalVolume = data.reduce((acc, curr) => acc + curr.kuota_liter, 0);
+  const averageVolume = data.length > 0 ? totalVolume / data.length : 0;
 
   return (
-    <div className="space-y-6">
-      <div className="bg-gradient-to-r from-blue-600 to-indigo-700 rounded-2xl p-8 text-white shadow-xl">
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
-          <div>
-            <h2 className="text-3xl font-bold mb-2 flex items-center gap-3">
-              <TrendingUp className="text-blue-200" /> AI Recommendation
-            </h2>
-            <p className="text-blue-100 max-w-xl">
-              Sistem prediksi kuota BBM kendaraan berdasarkan analisis data historis penggunaan.
-            </p>
-          </div>
+    <div className="space-y-6 animate-in fade-in duration-500">
+      
+      {/* Header Section */}
+      <div className="bg-gradient-to-br from-indigo-600 to-blue-700 rounded-2xl p-8 text-white shadow-xl relative overflow-hidden">
+        <div className="absolute top-0 right-0 p-4 opacity-10">
+          <Activity size={120} className="text-white" />
+        </div>
+        <h2 className="text-3xl font-bold mb-2 flex items-center gap-3">
+          <TrendingUp className="text-indigo-200" /> AI Prediction Dashboard
+        </h2>
+        <p className="text-indigo-100 max-w-2xl text-lg">
+          Prediksi cerdas kebutuhan BBM tahun 2026 menggunakan algoritma Machine Learning.
+        </p>
+      </div>
 
-          <div className="flex gap-3 items-end">
-            <div className="bg-white/10 backdrop-blur-md p-2 rounded-lg border border-white/20">
-              <label className="block text-xs text-blue-200 mb-1">Metode Prediksi</label>
-              <select
-                value={method}
-                onChange={e => setMethod(e.target.value)}
-                className="bg-transparent text-white font-medium text-sm outline-none cursor-pointer [&>option]:text-slate-800"
+      {/* Filters & Controls */}
+      <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 grid grid-cols-1 md:grid-cols-3 gap-6">
+        
+        {/* Select Vehicle */}
+        <div>
+          <label className="block text-sm font-medium text-slate-600 mb-2 flex items-center gap-2">
+            <BarChart3 size={16} /> Data Kendaraan
+          </label>
+          <div className="relative">
+            <select 
+              className="w-full appearance-none bg-slate-50 border border-slate-300 text-slate-700 py-3 px-4 pr-8 rounded-lg focus:outline-none focus:bg-white focus:border-indigo-500 transition-colors cursor-pointer"
+              value={selectedVehicleId || ''}
+              onChange={(e) => setSelectedVehicleId(Number(e.target.value))}
+            >
+              {vehicles.map((v) => (
+                <option key={v.id} value={v.id || 0}>
+                   {v.plat_nomor} - {v.nama_pemilik}
+                </option>
+              ))}
+            </select>
+            <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-slate-700">
+              <ChevronDown size={16} />
+            </div>
+          </div>
+        </div>
+
+        {/* Select Method */}
+        <div>
+          <label className="block text-sm font-medium text-slate-600 mb-2 flex items-center gap-2">
+            <Zap size={16} /> Metode Prediksi
+          </label>
+          <div className="flex bg-slate-100 p-1 rounded-lg">
+            {['ARIMA', 'LSTM', 'Prophet'].map((m) => (
+              <button
+                key={m}
+                onClick={() => setMethod(m as any)}
+                className={`flex-1 py-2 text-sm font-medium rounded-md transition-all duration-200 
+                  ${method === m 
+                    ? 'bg-white text-indigo-600 shadow-sm ring-1 ring-slate-200' 
+                    : 'text-slate-500 hover:text-slate-700'
+                  }`}
               >
-                <option value="simple_average">Simple Average</option>
-                <option value="growth_5pct">Growth 5% (Inflasi)</option>
-              </select>
-            </div>
+                {m}
+              </button>
+            ))}
+          </div>
+        </div>
 
-            <div className="bg-white/10 backdrop-blur-md p-2 rounded-lg border border-white/20">
-              <label className="block text-xs text-blue-200 mb-1">Tahun Prediksi</label>
-              <input
-                type="number"
-                value={year}
-                onChange={e => setYear(parseInt(e.target.value))}
-                className="bg-transparent text-white font-bold text-xl w-20 outline-none"
-              />
-            </div>
+        {/* Select Time Type */}
+        <div>
+          <label className="block text-sm font-medium text-slate-600 mb-2 flex items-center gap-2">
+            <Calendar size={16} /> Tipe Waktu
+          </label>
+          <div className="flex bg-slate-100 p-1 rounded-lg">
+            {['Harian', 'Bulanan', 'Tahunan'].map((t) => (
+              <button
+                key={t}
+                onClick={() => setTimeType(t as any)}
+                className={`flex-1 py-2 text-sm font-medium rounded-md transition-all duration-200 
+                  ${timeType === t 
+                    ? 'bg-white text-blue-600 shadow-sm ring-1 ring-slate-200' 
+                    : 'text-slate-500 hover:text-slate-700'
+                  }`}
+              >
+                {t}
+              </button>
+            ))}
           </div>
         </div>
       </div>
 
-      {/* Method Info Box */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className={`p-4 rounded-xl border transition-colors flex gap-3 items-start ${method === 'simple_average' ? 'bg-blue-50 border-blue-200 ring-1 ring-blue-300' : 'bg-white border-slate-200 text-slate-400'}`}>
-          <div className={`p-2 rounded-lg ${method === 'simple_average' ? 'bg-blue-100 text-blue-600' : 'bg-slate-100'}`}>
-            <Info size={20} />
-          </div>
-          <div>
-            <h4 className="font-bold text-sm mb-1">Simple Average</h4>
-            <p className="text-xs leading-relaxed">
-              Menghitung rata-rata murni berdasarkan riwayat transaksi tahun sebelumnya tanpa faktor pengali. Cocok untuk kondisi stabil.
-            </p>
-          </div>
+      {/* Keterangan & Ringkasan */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100">
+          <p className="text-indigo-600 text-xs font-bold uppercase tracking-wider mb-1">Target Prediksi</p>
+          <p className="text-2xl font-bold text-indigo-900">Tahun 2026</p>
         </div>
-
-        <div className={`p-4 rounded-xl border transition-colors flex gap-3 items-start ${method === 'growth_5pct' ? 'bg-indigo-50 border-indigo-200 ring-1 ring-indigo-300' : 'bg-white border-slate-200 text-slate-400'}`}>
-          <div className={`p-2 rounded-lg ${method === 'growth_5pct' ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-100'}`}>
-            <TrendingUp size={20} />
-          </div>
-          <div>
-            <h4 className="font-bold text-sm mb-1">Growth 5% (Inflasi)</h4>
-            <p className="text-xs leading-relaxed">
-              Mengasumsikan kenaikan kebutuhan BBM sebesar 5% dari rata-rata historis. Cocok untuk antisipasi inflasi atau peningkatan aktivitas.
-            </p>
-          </div>
+        <div className="bg-blue-50 p-4 rounded-xl border border-blue-100">
+          <p className="text-blue-600 text-xs font-bold uppercase tracking-wider mb-1">Metode Digunakan</p>
+          <p className="text-2xl font-bold text-blue-900">{method}</p>
+        </div>
+        <div className="bg-emerald-50 p-4 rounded-xl border border-emerald-100">
+          <p className="text-emerald-600 text-xs font-bold uppercase tracking-wider mb-1">Total Estimasi</p>
+          <p className="text-2xl font-bold text-emerald-900">{totalVolume.toFixed(2)} L</p>
+        </div>
+        <div className="bg-amber-50 p-4 rounded-xl border border-amber-100">
+          <p className="text-amber-600 text-xs font-bold uppercase tracking-wider mb-1">Rata-rata /{timeType}</p>
+          <p className="text-2xl font-bold text-amber-900">{averageVolume.toFixed(2)} L</p>
         </div>
       </div>
 
-      <Card>
-        <table className="w-full text-left">
-          <thead className="bg-slate-50 text-slate-600">
-            <tr>
-              <th className="p-4">Kendaraan</th>
-              <th className="p-4">Metode</th>
-              <th className="p-4 text-right">Rekomendasi Kuota (Tahun)</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {
-              loading ? (
-                <tr>
-                  <td colSpan={3} className="p-12 text-center text-slate-500">
-                    <div className="flex flex-col items-center justify-center gap-3">
-                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-                      <span>Sedang memproses prediksi AI...</span>
-                    </div>
-                  </td>
-                </tr>
-              ) : data.length === 0 ? (
-                <tr><td colSpan={3} className="p-8 text-center text-slate-500">Belum ada data prediksi untuk periode ini.</td></tr>
-              ) : (
-                data.map((item, i) => (
-                  <tr key={i}>
-                    <td className="p-4 font-bold text-slate-700">{item.plat_nomor}</td>
-                    <td className="p-4 text-slate-500 text-sm font-mono">
-                      <span className="bg-slate-100 px-2 py-1 rounded border border-slate-200">
-                        {item.method}
-                      </span>
-                    </td>
-                    <td className="p-4 text-right font-bold text-blue-600 text-lg">{item.recommended_total_liter.toLocaleString()} L</td>
+      {/* Main Content: Graph & Table */}
+      {loading ? (
+         <div className="bg-white rounded-xl h-96 flex flex-col items-center justify-center text-slate-400 shadow-sm border border-slate-200">
+            <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-indigo-600 mb-4"></div>
+            <p>Sedang memproses data AI...</p>
+         </div>
+      ) : data.length === 0 ? (
+         <div className="bg-white rounded-xl h-64 flex items-center justify-center text-slate-400 shadow-sm border border-slate-200 flex-col gap-2">
+            <FileText size={48} className="opacity-20"/>
+            <p>Tidak ada data prediksi untuk parameter ini.</p>
+            <p className="text-xs">Pastikan API localhost:8000 berjalan.</p>
+         </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          
+          {/* Chart Section (2/3 width) */}
+          <div className="lg:col-span-2 bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="font-bold text-lg text-slate-800">Grafik Proyeksi {timeType}</h3>
+              <span className="text-xs font-mono text-slate-400 bg-slate-100 px-2 py-1 rounded">
+                Vehicle ID: {selectedVehicleId}
+              </span>
+            </div>
+            
+            <div className="h-80 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={data} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="colorKuota" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#4f46e5" stopOpacity={0.2}/>
+                      <stop offset="95%" stopColor="#4f46e5" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis 
+                    dataKey="waktu" 
+                    tickFormatter={formatXAxis} 
+                    tick={{fill: '#64748b', fontSize: 12}} 
+                    axisLine={false}
+                    tickLine={false}
+                    minTickGap={30}
+                  />
+                  <YAxis 
+                    tick={{fill: '#64748b', fontSize: 12}} 
+                    axisLine={false}
+                    tickLine={false}
+                    label={{ value: 'Liter', angle: -90, position: 'insideLeft', style: { fill: '#94a3b8' } }}
+                  />
+                  <Tooltip 
+                    contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                    labelStyle={{ color: '#64748b', marginBottom: '0.25rem', fontSize: '0.8rem' }}
+                    formatter={(value: number) => [`${value.toFixed(2)} Liter`, 'Prediksi']}
+                    labelFormatter={(label) => new Date(label).toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                  />
+                  <Legend iconType="circle" wrapperStyle={{ paddingTop: '20px' }}/>
+                  <Area 
+                    type="monotone" 
+                    dataKey="kuota_liter" 
+                    name={`Prediksi (${method})`}
+                    stroke="#4f46e5" 
+                    strokeWidth={3}
+                    fillOpacity={1} 
+                    fill="url(#colorKuota)" 
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Table Section (1/3 width) */}
+          <div className="lg:col-span-1 bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col h-[500px]">
+            <div className="p-6 border-b border-slate-100">
+               <h3 className="font-bold text-lg text-slate-800">Detail Data</h3>
+               <p className="text-sm text-slate-500">Menampilkan {totalData} data prediksi</p>
+            </div>
+            
+            <div className="flex-1 overflow-auto p-0">
+              <table className="w-full text-left border-collapse">
+                <thead className="bg-slate-50 sticky top-0 z-10">
+                  <tr>
+                    <th className="p-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Tanggal</th>
+                    <th className="p-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-right">Kuota (L)</th>
                   </tr>
-                ))
-              )}
-          </tbody>
-        </table>
-      </Card>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {data.map((row) => (
+                    <tr key={row.id} className="hover:bg-slate-50 transition-colors">
+                      <td className="p-4 text-sm text-slate-600 font-medium border-l-2 border-transparent hover:border-indigo-500">
+                        {new Date(row.waktu).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: '2-digit' })}
+                      </td>
+                      <td className="p-4 text-sm font-bold text-slate-800 text-right">
+                        {row.kuota_liter.toFixed(2)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          
+        </div>
+      )}
     </div>
   );
 };
