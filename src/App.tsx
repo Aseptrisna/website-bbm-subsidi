@@ -3,11 +3,11 @@ import {
   LayoutDashboard, Car, Fuel, AlertTriangle,
   TrendingUp, LogOut, Plus, Edit, Trash2,
   ChevronLeft, ChevronRight, Menu, X, User,
-  Info, Calendar, Zap, BarChart3, Activity, 
+   Calendar, Zap, BarChart3, Activity, 
   FileText, ChevronDown
 } from 'lucide-react';
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+  XAxis, YAxis, CartesianGrid, Tooltip,
   Legend, ResponsiveContainer, AreaChart, Area
 } from 'recharts';
 
@@ -15,7 +15,7 @@ import {
 // --- CONSTANTS & CONFIG ---
 const AUTH_API_URL = 'https://api-bbm-subsidi.sta.my.id'; 
 const DATA_API_URL = 'https://api-bbm-subsidi.sta.my.id';
-const PREDICTION_API_URL = 'http://localhost:8000/recommendations/visualize';
+const PREDICTION_API_URL = 'https://api-bbm-subsidi.sta.my.id/recommendations/visualize';
 
 // --- INTERFACES ---
 interface Vehicle {
